@@ -1,71 +1,66 @@
-import cv2
 import numpy as np
-import tensorflow as tf
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout, BatchNormalization
+from tensorflow.keras.utils import to_categorical
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
 
-# Load the pre-trained CNN model from the .h5 extension file
-model = tf.keras.models.load_model('emotion_model.h5')
+# Load the FER2013 dataset from Excel
+data = pd.read_csv('fer2013.csv')
 
-# Define a dictionary to map emotion indices to emotion labels
-emotion_labels = {0: 'Angry', 1: 'Disgust', 2: 'Fear', 3: 'Happy', 4: 'Sad', 5: 'Surprise', 6: 'Neutral'}
+# Split the dataset into features and labels
+pixels = data['pixels'].tolist()
+X = np.array([np.fromstring(pixel, dtype='int', sep=' ') for pixel in pixels])
+y = to_categorical(data['emotion'])
 
-# Function to preprocess the image for the CNN model
-def preprocess_image(image):
-    # Resize the image to 48x48 pixels
-    resized_image = cv2.resize(image, (48, 48))
+# Split the data into training and testing sets
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-    # Convert the image to grayscale (single channel)
-    gray_image = cv2.cvtColor(resized_image, cv2.COLOR_BGR2GRAY)
+# Reshape the data and normalize pixel values
+X_train = X_train.reshape(X_train.shape[0], 48, 48, 1).astype('float32') / 255.0
+X_test = X_test.reshape(X_test.shape[0], 48, 48, 1).astype('float32') / 255.0
 
-    # Normalize the pixel values to be in the range [0, 1]
-    normalized_image = gray_image / 255.0
+# Data Augmentation
+datagen = ImageDataGenerator(
+    rotation_range=15,
+    width_shift_range=0.1,
+    height_shift_range=0.1,
+    shear_range=0.2,
+    zoom_range=0.2,
+    horizontal_flip=True,
+)
 
-    # Add a channel dimension to match the input shape of the CNN model
-    input_image = np.expand_dims(normalized_image, axis=-1)
+datagen.fit(X_train)
 
-    return input_image
+# Create the CNN model
+model = Sequential()
+model.add(Conv2D(32, (3, 3), activation='relu', input_shape=(48, 48, 1)))
+model.add(BatchNormalization())
+model.add(Conv2D(64, (3, 3), activation='relu'))
+model.add(BatchNormalization())
+model.add(MaxPooling2D((2, 2)))
+model.add(Dropout(0.25))
+model.add(Flatten())
+model.add(Dense(128, activation='relu'))
+model.add(BatchNormalization())
+model.add(Dropout(0.5))
+model.add(Dense(7, activation='softmax'))
 
-# Function to predict the user's emotion using the CNN model
-def predict_emotion(image):
-    # Preprocess the image
-    preprocessed_image = preprocess_image(image)
+# Compile the model
+model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
 
-    # Convert the image to a batch format for model prediction
-    input_batch = np.expand_dims(preprocessed_image, axis=0)
+# Print model summary
+model.summary()
 
-    # Perform inference using the CNN model
-    predictions = model.predict(input_batch)
+# Train the model
+batch_size = 64
+epochs = 50
+history = model.fit(datagen.flow(X_train, y_train, batch_size=batch_size),
+                    steps_per_epoch=X_train.shape[0] // batch_size,
+                    epochs=epochs,
+                    validation_data=(X_test, y_test))
 
-    # Get the emotion index with the highest confidence
-    emotion_index = np.argmax(predictions[0])
+# Save the trained model
+model.save('emotion_model.h5')
 
-    # Get the emotion label from the index
-    predicted_emotion = emotion_labels[emotion_index]
-
-    return predicted_emotion
-
-# Main function for live video emotion detection
-def main():
-    # Use OpenCV to access the user's camera
-    camera = cv2.VideoCapture(0)
-
-    while True:
-        # Capture a frame from the camera
-        ret, frame = camera.read()
-
-        # Perform emotion detection on the frame
-        emotion = predict_emotion(frame)
-
-        # Display the frame with the predicted emotion label
-        cv2.putText(frame, f'Emotion: {emotion}', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-        cv2.imshow('Emotion Detection', frame)
-
-        # Exit the loop when the 'q' key is pressed
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-
-    # Release the camera and close the OpenCV windows
-    camera.release()
-    cv2.destroyAllWindows()
-
-if __name__ == "__main__":
-    main()
